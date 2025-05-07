@@ -77,14 +77,14 @@ int main(int argc, char *argv[]) {
     char buffer[1024];
     int n = recv(socket_fd, buffer, sizeof(buffer), 0);
     std::string message(buffer, n);
-    std::cout << "⬅️ Сообщение от сервера: \"" << message << "\"" << std::endl;
+    std::cout << "Сообщение от сервера: \"" << message << "\"" << std::endl;
     std::istringstream iss(message);
     std::string cmd;
     int id;
     iss >> cmd >> id;
 
     if (cmd == "start") {
-        std::cout << "Клиент ID:" << id << " запущен" << std::endl;
+        std::cout << "Клиент ID: " << id << " запущен" << std::endl;
     }
 
     int my_id = id ? id : 0;
@@ -94,7 +94,7 @@ int main(int argc, char *argv[]) {
     int last_checker_id = -1;
 
     while (break_flag) {
-        std::cout << "\n Новая итерация кодирования" << std::endl;
+        std::cout << "\nНовая итерация кодирования" << std::endl;
         std::cout << "Идет написание кода..." << std::endl;
         std::this_thread::sleep_for(std::chrono::seconds(rand() % 10 + 1));
         std::cout << "Код написан" << std::endl;
@@ -166,7 +166,7 @@ int main(int argc, char *argv[]) {
             int id_to, id_from;
             iss >> cmd >> id_to >> id_from;
             if (id_to == -1) {
-                std::cout << "⏳ Жду результата моей проверки..." << std::endl;
+                std::cout << "Жду результата моей проверки..." << std::endl;
                 std::this_thread::sleep_for(std::chrono::seconds(5)); 
             } else {
                 std::cout << "Начинаю проверку кода от клиента ID:" << id_to << std::endl;
