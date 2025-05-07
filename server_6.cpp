@@ -12,8 +12,8 @@
 #include <string>
 #include <iomanip>
 #include <mutex>
-#include <cstring> // Для функции strerror
-
+#include <cstring> 
+#include <fcntl.h>
 int break_flag = 1;
 int monitor_socket_fd = -1;
 std::mutex monitor_socket_mutex;
@@ -23,7 +23,6 @@ class Logger {
 public:
     static void log(const std::string& message) {
         std::cout << message << std::endl;
-        // Логирование в сокет монитора
         if (monitor_socket_fd != -1) {
             std::string log_message = message + '\n';
             std::lock_guard<std::mutex> lock(monitor_socket_mutex);
@@ -107,7 +106,7 @@ int main(int argc, char *argv[]) {
     // В очередях лежат id клиентов, для которых надо проверить код
     std::vector<std::queue<Task> > tasks(3, std::queue<Task>());
     
-    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int socket_fd = socket(AF_INET, SOCK_STREAM , 0);
     if (socket_fd < 0) {
         std::cerr << "Ошибка создания сокета" << std::endl;
         return 1;
@@ -179,62 +178,55 @@ int main(int argc, char *argv[]) {
     // Создаем поток для ожидания подключения монитора
     std::thread monitor_thread([&]() {
         Logger::log("Запущен поток для ожидания подключения монитора");
-        
+        int flags = fcntl(socket_fd, F_GETFL, 0);
+        if (flags != -1) {
+            fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK);
+        }
+
         while (break_flag) {
+            // Если уже есть подключённый монитор — проверяем, жив ли он
             if (monitor_socket_fd != -1) {
-                char test_buffer[1];
-                int result = recv(monitor_socket_fd, test_buffer, 1, MSG_PEEK | MSG_DONTWAIT);
-                
-                if (result <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                char test_buf;
+                int r = recv(monitor_socket_fd, &test_buf, 1, MSG_PEEK | MSG_DONTWAIT);
+                if (r <= 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                     Logger::log("Монитор отключился, ожидаем нового подключения");
                     close(monitor_socket_fd);
                     monitor_socket_fd = -1;
-                } else {
-                    std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
                 }
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                continue;
             }
-            
-            int monitor_socket;
+
             struct sockaddr_in monitor_address;
             socklen_t monitor_len = sizeof(monitor_address);
-            
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(socket_fd, &readfds);
-            
-            struct timeval tv;
-            tv.tv_sec = 3;
-            tv.tv_usec = 0;
-            
-            int select_result = select(socket_fd + 1, &readfds, NULL, NULL, &tv);
-            
-            if (select_result > 0 && FD_ISSET(socket_fd, &readfds)) {
-                if ((monitor_socket = accept(socket_fd, (struct sockaddr *) &monitor_address, &monitor_len)) < 0) {
-                    Logger::log("Ошибка при принятии соединения монитора");
+            int monitor_socket = accept(socket_fd, (struct sockaddr*)&monitor_address, &monitor_len);
+            if (monitor_socket < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    Logger::log("Ошибка при accept монитора: " + std::string(strerror(errno)));
                     std::this_thread::sleep_for(std::chrono::seconds(5));
-                    continue;
-                }
-                
-                char buffer[1024];
-                int n = recv(monitor_socket, buffer, sizeof(buffer), 0);
-                std::string message(buffer, n);
-                
-                if (message == "monitor\n") {
-                    {
-                        std::lock_guard<std::mutex> lock(monitor_socket_mutex);
-                        monitor_socket_fd = monitor_socket;
-                    }
-                    Logger::log("Монитор подключен (сокет: " + std::to_string(monitor_socket) + ", IP: " 
-                              + inet_ntoa(monitor_address.sin_addr) + ":" + std::to_string(ntohs(monitor_address.sin_port)) + ")");
                 } else {
-                    close(monitor_socket);
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
+                continue;
             }
-            
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            // Проверка, что это монитор подключился а не что то иное
+            char buf[1024];
+            int n = recv(monitor_socket, buf, sizeof(buf), 0);
+            std::string message(buf, n);
+            if (message == "monitor\n") {
+                {
+                    std::lock_guard<std::mutex> lock(monitor_socket_mutex);
+                    monitor_socket_fd = monitor_socket;
+                }
+                Logger::log("Монитор подключен (сокет: " + std::to_string(monitor_socket)
+                          + ", IP: " + inet_ntoa(monitor_address.sin_addr)
+                          + ":" + std::to_string(ntohs(monitor_address.sin_port)) + ")");
+            } else {
+                close(monitor_socket);
+            }
         }
-        
+
         Logger::log("Поток ожидания монитора завершен");
     });
     
